@@ -18,6 +18,8 @@
 //!
 //! * `write`: Enabled by default. Enables the `write` module. Always uses
 //!   the `std` library.
+#![allow(dead_code)]
+#![allow(unused_imports)]
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 // Selectively enable rust 2018 warnings

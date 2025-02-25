@@ -1610,21 +1610,7 @@ pub(crate) mod convert {
                 convert_address(from_unit.low_pc).ok_or(ConvertError::InvalidAddress)?;
 
             let (line_program_offset, line_program, line_program_files) =
-                match from_unit.line_program {
-                    Some(ref from_program) => {
-                        let from_program = from_program.clone();
-                        let line_program_offset = from_program.header().offset();
-                        let (line_program, line_program_files) = LineProgram::from(
-                            from_program,
-                            dwarf,
-                            line_strings,
-                            strings,
-                            convert_address,
-                        )?;
-                        (Some(line_program_offset), line_program, line_program_files)
-                    }
-                    None => (None, LineProgram::none(), Vec::new()),
-                };
+                (None, LineProgram::none(), Vec::new());
 
             let mut ranges = RangeListTable::default();
             let mut locations = LocationListTable::default();
@@ -1738,10 +1724,6 @@ pub(crate) mod convert {
             from: read::AttributeValue<R>,
         ) -> ConvertResult<Option<AttributeValue>> {
             let to = match from {
-                read::AttributeValue::Addr(val) => match (context.convert_address)(val) {
-                    Some(val) => AttributeValue::Address(val),
-                    None => return Err(ConvertError::InvalidAddress),
-                },
                 read::AttributeValue::Block(r) => AttributeValue::Block(r.to_slice()?.into()),
                 read::AttributeValue::Data1(val) => AttributeValue::Data1(val),
                 read::AttributeValue::Data2(val) => AttributeValue::Data2(val),
@@ -1749,31 +1731,8 @@ pub(crate) mod convert {
                 read::AttributeValue::Data8(val) => AttributeValue::Data8(val),
                 read::AttributeValue::Sdata(val) => AttributeValue::Sdata(val),
                 read::AttributeValue::Udata(val) => AttributeValue::Udata(val),
-                read::AttributeValue::Exprloc(expression) => {
-                    let expression = Expression::from(
-                        expression,
-                        context.unit.encoding(),
-                        Some(context.dwarf),
-                        Some(context.unit),
-                        Some(context.entry_ids),
-                        context.convert_address,
-                    )?;
-                    AttributeValue::Exprloc(expression)
-                }
                 // TODO: it would be nice to preserve the flag form.
                 read::AttributeValue::Flag(val) => AttributeValue::Flag(val),
-                read::AttributeValue::DebugAddrBase(_base) => {
-                    // We convert all address indices to addresses,
-                    // so this is unneeded.
-                    return Ok(None);
-                }
-                read::AttributeValue::DebugAddrIndex(index) => {
-                    let val = context.dwarf.address(context.unit, index)?;
-                    match (context.convert_address)(val) {
-                        Some(val) => AttributeValue::Address(val),
-                        None => return Err(ConvertError::InvalidAddress),
-                    }
-                }
                 read::AttributeValue::UnitRef(val) => {
                     if !context.unit.header.is_valid_offset(val) {
                         return Err(ConvertError::InvalidUnitRef);
@@ -1791,64 +1750,6 @@ pub(crate) mod convert {
                         .get(&UnitSectionOffset::DebugInfoOffset(val))
                         .ok_or(ConvertError::InvalidDebugInfoRef)?;
                     AttributeValue::DebugInfoRef(Reference::Entry(id.0, id.1))
-                }
-                read::AttributeValue::DebugInfoRefSup(val) => AttributeValue::DebugInfoRefSup(val),
-                read::AttributeValue::DebugLineRef(val) => {
-                    // There should only be the line program in the CU DIE which we've already
-                    // converted, so check if it matches that.
-                    if Some(val) == context.line_program_offset {
-                        AttributeValue::LineProgramRef
-                    } else {
-                        return Err(ConvertError::InvalidLineRef);
-                    }
-                }
-                read::AttributeValue::DebugMacinfoRef(val) => AttributeValue::DebugMacinfoRef(val),
-                read::AttributeValue::DebugMacroRef(val) => AttributeValue::DebugMacroRef(val),
-                read::AttributeValue::LocationListsRef(val) => {
-                    let iter = context
-                        .dwarf
-                        .locations
-                        .raw_locations(val, context.unit.encoding())?;
-                    let loc_list = LocationList::from(iter, context)?;
-                    let loc_id = context.locations.add(loc_list);
-                    AttributeValue::LocationListRef(loc_id)
-                }
-                read::AttributeValue::DebugLocListsBase(_base) => {
-                    // We convert all location list indices to offsets,
-                    // so this is unneeded.
-                    return Ok(None);
-                }
-                read::AttributeValue::DebugLocListsIndex(index) => {
-                    let offset = context.dwarf.locations_offset(context.unit, index)?;
-                    let iter = context
-                        .dwarf
-                        .locations
-                        .raw_locations(offset, context.unit.encoding())?;
-                    let loc_list = LocationList::from(iter, context)?;
-                    let loc_id = context.locations.add(loc_list);
-                    AttributeValue::LocationListRef(loc_id)
-                }
-                read::AttributeValue::RangeListsRef(offset) => {
-                    let offset = context.dwarf.ranges_offset_from_raw(context.unit, offset);
-                    let iter = context.dwarf.raw_ranges(context.unit, offset)?;
-                    let range_list = RangeList::from(iter, context)?;
-                    let range_id = context.ranges.add(range_list);
-                    AttributeValue::RangeListRef(range_id)
-                }
-                read::AttributeValue::DebugRngListsBase(_base) => {
-                    // We convert all range list indices to offsets,
-                    // so this is unneeded.
-                    return Ok(None);
-                }
-                read::AttributeValue::DebugRngListsIndex(index) => {
-                    let offset = context.dwarf.ranges_offset(context.unit, index)?;
-                    let iter = context
-                        .dwarf
-                        .ranges
-                        .raw_ranges(offset, context.unit.encoding())?;
-                    let range_list = RangeList::from(iter, context)?;
-                    let range_id = context.ranges.add(range_list);
-                    AttributeValue::RangeListRef(range_id)
                 }
                 read::AttributeValue::DebugTypesRef(val) => AttributeValue::DebugTypesRef(val),
                 read::AttributeValue::DebugStrRef(offset) => {
@@ -1868,11 +1769,6 @@ pub(crate) mod convert {
                     let id = context.strings.add(r.to_slice()?);
                     AttributeValue::StringRef(id)
                 }
-                read::AttributeValue::DebugLineStrRef(offset) => {
-                    let r = context.dwarf.line_string(offset)?;
-                    let id = context.line_strings.add(r.to_slice()?);
-                    AttributeValue::LineStringRef(id)
-                }
                 read::AttributeValue::String(r) => AttributeValue::String(r.to_slice()?.into()),
                 read::AttributeValue::Encoding(val) => AttributeValue::Encoding(val),
                 read::AttributeValue::DecimalSign(val) => AttributeValue::DecimalSign(val),
@@ -1888,21 +1784,8 @@ pub(crate) mod convert {
                 }
                 read::AttributeValue::Inline(val) => AttributeValue::Inline(val),
                 read::AttributeValue::Ordering(val) => AttributeValue::Ordering(val),
-                read::AttributeValue::FileIndex(val) => {
-                    if val == 0 && context.unit.encoding().version <= 4 {
-                        AttributeValue::FileIndex(None)
-                    } else {
-                        match context.line_program_files.get(val as usize) {
-                            Some(id) => AttributeValue::FileIndex(Some(*id)),
-                            None => return Err(ConvertError::InvalidFileIndex),
-                        }
-                    }
-                }
-                // Should always be a more specific section reference.
-                read::AttributeValue::SecOffset(_) => {
-                    return Err(ConvertError::InvalidAttributeValue);
-                }
                 read::AttributeValue::DwoId(DwoId(val)) => AttributeValue::Udata(val),
+                _ => return Ok(None),
             };
             Ok(Some(to))
         }
